@@ -71,7 +71,7 @@ geom_base = '''
             sqldate, 
             actor1name, 
             actor2name, 
-            eventcode::float, 
+            eventcode::text, 
             goldsteinscale::float,
             numarticles::integer, 
             avgtone::float, 

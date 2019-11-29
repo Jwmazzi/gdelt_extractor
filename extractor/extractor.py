@@ -59,8 +59,6 @@ class Extractor(object):
 
     def get_logger(self):
 
-        """ Ensures log_dir Directory Exists, Build & Returns Simple Logger """
-
         the_logger = logging.getLogger('Extractor')
         the_logger.setLevel(logging.DEBUG)
 
@@ -160,83 +158,33 @@ class Extractor(object):
 
         return [title, site, summary, keywords, meta_keys]
 
-    def process_events(self, year, target_csv):
-
-        # Tracking
-        seen_urls = []
-        proc_urls = 0
+    @open_connection
+    def process_events(self, cursor, table):
 
         # Extract Records
-        with open(target_csv, newline='', encoding='utf8') as the_csv:
+        cursor.execute(f"select globaleventid, sourceurl from {table}")
 
-            the_reader = csv.reader(the_csv, delimiter='\t')
+        for row in cursor.fetchall():
 
-            for idx, row in enumerate(the_reader, start=1):
+            try:
+                # Extract NLP Values with Article
+                atts = self.process_article(row[1])
 
-                # Pull Filter Attributes
-                avg_tone = float(row[34])  # Average Tone
-                src_url = row[57]  # Source URL
-                a1_geo_lat = row[39]  # Latitude Check
-                a1_gc = row[37]  # Actor1Geo_Country
-                a2_geo_lat = row[39]  # Longitude Check
-                a2_gc = row[44]  # Actor1Geo_Country
+                cursor.execute(f"""
+                                update {table} set
+                                title     = '{atts[0]}',
+                                site      = '{atts[1]}',
+                                summary   = '{atts[2]}',
+                                keywords  = '{atts[3]}',
+                                meta_keys = '{atts[4]}'
+                                where globaleventid = '{row[0]}' 
+                                """)
 
-                try:
-                    # TODO - Actor1Geo_Type in ('2', '3')
-                    if all([v == 'US' for v in [a1_gc, a2_gc]]) \
-                            and avg_tone < 0 \
-                            and src_url not in seen_urls \
-                            and all([a1_geo_lat, a2_geo_lat]):
+            except ArticleException:
+                pass
 
-                        # Extract NLP Values with Article
-                        derived_attributes = self.process_article(src_url)
-
-                        # Push Values into Master Table
-                        with self.get_connection() as conn:
-                            with conn.cursor() as cur:
-                                cur.execute(
-                                    '''
-                                    insert into gdelt_{}
-                                    values {}
-                                    '''.format(year, tuple(row + derived_attributes))
-                                )
-
-                        proc_urls += 1
-
-                except ArticleException:
-                    pass
-
-                except:
-                    print(f'{traceback.format_exc()}')
-
-                finally:
-                    seen_urls.append(src_url)
-
-    def process_day(self, year, the_day):
-
-        print(f'Processing Day: {the_day}')
-
-        # Download GDELT Records Locally for Processing
-        daily_csv = self.extract_daily_csv(the_day)
-
-        # Ignore Bad CSV Requests
-        if not daily_csv: return
-
-        # Collect Enriched Values & Push Into Table
-        self.process_events(year, daily_csv)
-
-        # Remove Temporary Directory
-        shutil.rmtree(os.path.dirname(daily_csv))
-
-    def run_month(self, month, year):
-
-        date_range = self.get_date_range(year, month)
-
-        # Create Pool & Run Records
-        pool = Pool(processes=cpu_count() - 1)
-        pool.map(partial(self.process_day, year), date_range)
-        pool.close()
-        pool.join()
+            except:
+                print(f'{traceback.format_exc()}')
 
     def extract_csv(self, csv_url):
 
@@ -310,7 +258,30 @@ class Extractor(object):
 
         cursor.execute(f"update {table_name} set geom = st_setsrid(st_point(actor1geo_long, actor1geo_lat), 4326)")
 
+    @open_connection
+    def create_column(self, cursor, table, col_name, col_type):
+
+        cursor.execute(f"alter table {table} add column {col_name} {col_type};")
+
+    @open_connection
+    def remove_duplicates(self, cursor, table):
+
+        cursor.execute(f"select globaleventid, sourceurl from {table}")
+
+        deletions = []
+        seen_urls = []
+        for row in cursor.fetchall():
+            if row[1] not in seen_urls:
+                seen_urls.append(row[1])
+            else:
+                deletions.append(row[0])
+
+        cursor.execute(f"delete from {table} where globaleventid in {tuple(deletions)}")
+
     def process_latest(self):
+
+        # Process Started
+        start = time.time()
 
         # Fetch URL Information for Latest CSV
         response = requests.get(self.v2_urls.get('last_update'))
@@ -336,9 +307,21 @@ class Extractor(object):
         self.set_geom_field(self.latest_dst)
         self.pop_geom_field(self.latest_dst)
 
+        # Create Columns for Article Processing
+        self.create_column(self.latest_dst, 'meta_keys', 'text')
+        self.create_column(self.latest_dst, 'keywords', 'text')
+        self.create_column(self.latest_dst, 'summary', 'text')
+        self.create_column(self.latest_dst, 'title', 'text')
+        self.create_column(self.latest_dst, 'site', 'text')
+
+        # Remove "Duplicate" Entries
+        self.remove_duplicates(self.latest_dst)
+
+        # Enrich from Articles
+        self.process_events(self.latest_dst)
+
         # Remove Temporary Files
         shutil.rmtree(tmp_path)
 
-
-
-
+        # Run Time
+        self.logger.info(f'Ran: {round((time.time() - start) / 60, 2)}')
