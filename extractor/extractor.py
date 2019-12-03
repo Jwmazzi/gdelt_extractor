@@ -1,4 +1,4 @@
-from .v2_table import text_base, geom_base
+from .v2_table import text_base, geom_base, run_base
 
 from newspaper import Article, ArticleException
 from multiprocessing import Pool, cpu_count
@@ -45,7 +45,9 @@ class Extractor(object):
         self.v2_urls = self.get_v2_urls()
 
         self.latest_src = 'gdelt_latest_src'
+        self.latest_tmp = 'gdelt_latest_tmp'
         self.latest_dst = 'gdelt_latest_dst'
+        self.latest_run = 'gdelt_latest_run'
 
     @staticmethod
     def read_config(config):
@@ -264,6 +266,21 @@ class Extractor(object):
         cursor.execute(f"alter table {table} add column {col_name} {col_type};")
 
     @open_connection
+    def rename_table(self, cursor, old, new):
+
+        cursor.execute(f"alter table {old} rename to {new}")
+
+    @open_connection
+    def create_run_table(self, cursor, table_name):
+
+        cursor.execute(run_base.format(table_name))
+
+    @open_connection
+    def insert_run(self, cursor, table_name, seconds):
+
+        cursor.execute(f"insert into {table_name} (runtime) values ({seconds})")
+
+    @open_connection
     def remove_duplicates(self, cursor, table):
 
         cursor.execute(f"select globaleventid, sourceurl from {table}")
@@ -292,7 +309,7 @@ class Extractor(object):
         csv_file, tmp_path = self.extract_csv(last_url)
 
         # Delete Existing Latest Tables
-        for table in [self.latest_src, self.latest_dst]:
+        for table in [self.latest_src, self.latest_tmp]:
             if self.check_table(table):
                 self.delete_table(table)
 
@@ -301,27 +318,39 @@ class Extractor(object):
         self.load_latest(self.latest_src, csv_file)
 
         # Populate Table with Correct Types & Limited Attributes
-        self.load_subset(self.latest_src, self.latest_dst)
+        self.load_subset(self.latest_src, self.latest_tmp)
 
         # Populate Table with Geometries
-        self.set_geom_field(self.latest_dst)
-        self.pop_geom_field(self.latest_dst)
+        self.set_geom_field(self.latest_tmp)
+        self.pop_geom_field(self.latest_tmp)
 
         # Create Columns for Article Processing
-        self.create_column(self.latest_dst, 'meta_keys', 'text')
-        self.create_column(self.latest_dst, 'keywords', 'text')
-        self.create_column(self.latest_dst, 'summary', 'text')
-        self.create_column(self.latest_dst, 'title', 'text')
-        self.create_column(self.latest_dst, 'site', 'text')
+        self.create_column(self.latest_tmp, 'meta_keys', 'text')
+        self.create_column(self.latest_tmp, 'keywords', 'text')
+        self.create_column(self.latest_tmp, 'summary', 'text')
+        self.create_column(self.latest_tmp, 'title', 'text')
+        self.create_column(self.latest_tmp, 'site', 'text')
 
         # Remove "Duplicate" Entries
-        self.remove_duplicates(self.latest_dst)
+        self.remove_duplicates(self.latest_tmp)
 
         # Enrich from Articles
-        self.process_events(self.latest_dst)
+        self.process_events(self.latest_tmp)
+
+        # Dump Existing Destination & Replace With New Data
+        if self.check_table(self.latest_dst):
+            self.delete_table(self.latest_dst)
+        self.rename_table(self.latest_tmp, self.latest_dst)
 
         # Remove Temporary Files
         shutil.rmtree(tmp_path)
+
+        # Ensure Run Table Exists
+        if not self.check_table(self.latest_run):
+            self.create_run_table(self.latest_run)
+
+        # Push Latest Run
+        self.insert_run(self.latest_run, time.time())
 
         # Run Time
         self.logger.info(f'Ran: {round((time.time() - start) / 60, 2)}')

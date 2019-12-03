@@ -82,3 +82,9 @@ geom_base = '''
             from {}
             where actor1geo_lat != '' and actor1geo_long != ''
             '''
+
+run_base = '''
+           create table if not exists {} (
+           runtime float
+           )
+           '''
