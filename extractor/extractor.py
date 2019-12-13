@@ -153,7 +153,7 @@ class Extractor(object):
         # Unpack Article Properties & Replace Special Characters
         title     = article.title.replace("'", '')
         site      = urlparse(article.source_url).netloc
-        summary   = '{} . . . '.format(article.summary.replace("'", ''))[:500]
+        summary   = '{} . . . '.format(article.summary.replace("'", '')[:500])
         keywords  = ', '.join(sorted([self.text_filter(key) for key in article.keywords]))
         meta_keys = ', '.join(sorted([self.text_filter(key) for key in article.meta_keywords]))
 
