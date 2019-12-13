@@ -1,9 +1,8 @@
 from .v2_table import text_base, geom_base, run_base
 
 from newspaper import Article, ArticleException
-from multiprocessing import Pool, cpu_count
-from functools import wraps, partial
 from urllib.parse import urlparse
+from functools import wraps
 import traceback
 import datetime
 import calendar
@@ -16,7 +15,6 @@ import shutil
 import json
 import time
 import sys
-import csv
 import re
 import os
 
@@ -88,6 +86,7 @@ class Extractor(object):
 
         return the_logger
 
+
     @staticmethod
     def get_v2_urls():
 
@@ -113,7 +112,7 @@ class Extractor(object):
         if response.status_code != 200:
             return None
 
-        # Dumpt to Local CSV
+        # Dump to Local CSV
         temp_dir = tempfile.mkdtemp(dir=r'C:\Temp', prefix='{}_'.format(target_date))
         zip_file = '{}/{}.zip'.format(temp_dir, target_date)
         with open(zip_file, 'wb') as f: f.write(response.content)
@@ -152,16 +151,18 @@ class Extractor(object):
         article.nlp()
 
         # Unpack Article Properties & Replace Special Characters
-        title = self.text_filter(article.title)
-        summary = '{} . . . '.format(self.text_filter(article.summary)[:500])
-        keywords = ', '.join(sorted([self.text_filter(key) for key in article.keywords]))
+        title     = article.title.replace("'", '')
+        site      = urlparse(article.source_url).netloc
+        summary   = '{} . . . '.format(article.summary.replace("'", ''))[:500]
+        keywords  = ', '.join(sorted([self.text_filter(key) for key in article.keywords]))
         meta_keys = ', '.join(sorted([self.text_filter(key) for key in article.meta_keywords]))
-        site = urlparse(article.source_url).netloc
 
         return [title, site, summary, keywords, meta_keys]
 
     @open_connection
     def process_events(self, cursor, table):
+
+        self.logger.info('Processing Articles')
 
         # Extract Records
         cursor.execute(f"select globaleventid, sourceurl from {table}")
