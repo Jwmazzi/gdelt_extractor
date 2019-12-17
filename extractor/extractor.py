@@ -2,6 +2,7 @@ from .v2_table import text_base, geom_base, run_base
 
 from newspaper import Article, ArticleException
 from urllib.parse import urlparse
+from itertools import chain
 from functools import wraps
 import traceback
 import datetime
@@ -280,6 +281,13 @@ class Extractor(object):
     def insert_run(self, cursor, table_name, seconds):
 
         cursor.execute(f"insert into {table_name} (runtime) values ({seconds})")
+
+    @open_connection
+    def get_keywords(self, cursor):
+
+        cursor.execute(f"select keywords from {self.latest_dst}")
+
+        return [r.strip() for r in list(chain(*[r[0].split(',') for r in cursor.fetchall() if r[0]]))]
 
     @open_connection
     def remove_duplicates(self, cursor, table):
