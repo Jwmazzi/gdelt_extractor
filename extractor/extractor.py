@@ -1,6 +1,7 @@
 from .schema import v2_header, v1_header, article_columns, cameo, dtype_map
 
 from multiprocessing import Pool, cpu_count
+from sqlalchemy import create_engine
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
@@ -36,14 +37,9 @@ class Extractor(object):
 
         self.articles = True
 
-        # Load Configuration
-        self.config_dir = os.path.dirname(config)
         self.config = self.read_config(config)
 
-        self.db_name = self.config['db_name']
-        self.db_user = self.config['db_user']
-        self.db_pass = self.config['db_pass']
-        self.db_host = self.config['db_host']
+        self.engine = self.create_engine()
 
         self.latest_src = 'gdelt_latest_src'
         self.latest_tmp = 'gdelt_latest_tmp'
@@ -116,17 +112,21 @@ class Extractor(object):
 
         return processed_data
 
+    def create_engine(self):
+
+        n = self.config["db_name"]
+        u = self.config["db_user"]
+        p = self.config["db_pass"]
+        h = self.config["db_host"]
+        t = self.config["db_port"]
+
+        return create_engine(f'postgresql://{u}:{p}@{h}:{t}/{n}')
+
     def get_connection(self):
 
         return psycopg2.connect(dbname=self.db_name, user=self.db_user, password=self.db_pass, host=self.db_host)
 
     def temp_handler(func):
-        """
-        Wrapper function that appends a temporary file directory value that's passed into
-        the get_v2_sdf function. The directory path is used to temporarily store the .csv
-        downloaded for processing. After processing has finished, file contents and directory
-        are removed.
-        """
 
         @wraps(func)
         def wrap(*args, **kwargs):
@@ -210,62 +210,28 @@ class Extractor(object):
 
         return list(chain(*data))
 
-    def process_df(self, df, extracted_date, ext_geo, articles=True):
+    def process_df(self, df):
+
+        df = df[:50]
 
         print(f'Processing {len(df)} GDELT Records')
 
-        # Discard Anything Without a Coordinate
-        df.dropna(subset=['ActionGeo_Long', 'ActionGeo_Lat'], inplace=True)
+        # Process & Append Article Information
+        if self.articles:
+            article_data = self.article_enrichment(df[['GLOBALEVENTID', 'SOURCEURL']].values.tolist())
+            article_df   = pd.DataFrame(article_data, columns=article_columns)
+            df = df.merge(article_df, on='GLOBALEVENTID')
 
-        # Keep First Unique URL
-        df.drop_duplicates('SOURCEURL', inplace=True)
-
-        # Get Most of the Things - We Need to Use our Schema to be Smarter About This
-        df.fillna('0', inplace=True)
-
-        # Insert Value to Check on Future Runs
-        df['extracted_date'] = pd.to_datetime(extracted_date).replace(tzinfo=pytz.UTC)
-
-        # Avoid Python Integer Overflow Errors
-        df['GLOBALEVENTID'] = df['GLOBALEVENTID'].astype('str')
-        df['EventRootCode'] = df['EventRootCode'].astype('str')
-        df['DATEADDED']     = df['DATEADDED'].astype('str')
-
-        # Map Root Code to Cameo Definition
-        df['CATEGORY'] = df['EventRootCode'].apply(lambda x: cameo.get(x, 'Other'))
-
-        # Build Geometry
-        df = df.spatial.from_xy(df, 'ActionGeo_Long', 'ActionGeo_Lat')
-
-        # Filter Only Those Intersecting Input Filter
-        intersects = df.SHAPE.geom.disjoint(ext_geo) == False
-        geom_df = df[intersects]
-
-        # Append Article Information
-        if articles:
-            article_data = self.article_enrichment(geom_df[['GLOBALEVENTID', 'SOURCEURL']].values.tolist())
-            a_df = pd.DataFrame(article_data, columns=article_columns)
-            geom_df = df.merge(a_df, on='GLOBALEVENTID')
-
-        return geom_df
+        return df
 
     def fetch_last_v2_url(self):
-        """
-        Grab the V2 export .csv from the latest update URL. The url contains a list of three
-        packages that can be downloaded.  This function will return the export package in
-        the list.  This represents the newest events in the 15 minute dump.
-        """
+
         response = requests.get(self.v2_urls.get('last_update'))
         last_url = [r for r in response.text.split('\n')[0].split(' ') if 'export' in r][0]
 
         return last_url
 
     def fetch_last_v1_url(self):
-        """
-        Grab the V1 export .csv from the events index URL. The url contains a list of daily
-        packages that can be downloaded, dating back to 2013-04-01. This function will return
-        the latest package in the list.  This represents the newest events in the 24 hour dump.
-        """
 
         response = requests.get(f"{self.v1_urls.get('events')}/index.html")
         the_soup = BeautifulSoup(response.content[:2000], features='lxml')
@@ -275,10 +241,6 @@ class Extractor(object):
         return last_url
 
     def collect_v1_csv(self, temp_dir):
-
-        """
-        Collects Latest V1 CSV & Returns Path to CSV & CSV Name (Extraction Date)
-        """
 
         last_url = self.fetch_last_v1_url()
 
@@ -291,10 +253,6 @@ class Extractor(object):
 
     def collect_v2_csv(self, temp_dir):
 
-        """
-        Collects Latest V2 CSV & Returns Path to CSV & CSV Name (Extraction Date)
-        """
-
         last_url = self.fetch_last_v2_url()
 
         csv_file = self.extract_csv(last_url, temp_dir)
@@ -304,24 +262,17 @@ class Extractor(object):
 
         return csv_file, csv_name
 
-    def get_v2_sdf(self, csv_file, csv_name, ext_geo):
-        """
-        Process GDELT 2.0 event data in a .csv format and convert into a spatial data frame.
-        """
+    def get_v2_df(self, csv_file):
 
         try:
-            # Convert csv into a pandas dataframe. See schema.py for columns processed from GDELT 2.0
             df = pd.read_csv(csv_file, sep='\t', names=v2_header, dtype=dtype_map)
 
-            return self.process_df(df, csv_name, ext_geo)
+            return self.process_df(df)
 
         except Exception as gen_exc:
             print(f'Error Building SDF: {gen_exc}')
 
-    def get_v1_sdf(self, csv_file, csv_name):
-        """
-        Process GDELT 1.0 event data in a .csv format and convert into a spatial data frame.
-        """
+    def get_v1_df(self, csv_file, csv_name):
 
         try:
             # Convert csv into a pandas dataframe. See schema.py for columns processed from GDELT 2.0
@@ -426,6 +377,34 @@ class Extractor(object):
 
         cursor.execute(f"delete from {table} where globaleventid in {tuple(deletions)}")
 
+    def run_v2(self, temp_dir):
+
+        start = time.time()
+
+        try:
+            csv_file, csv_name = self.collect_v2_csv(temp_dir)
+            df = self.get_v2_df(csv_file)
+
+            df.to_sql('v2_dump', self.engine, index=False, if_exists='replace')
+
+        finally:
+            print(f'Ran V2 Solution: {round((time.time() - start) / 60, 2)}')
+
+    @temp_handler
+    def run_v1(self, temp_dir):
+
+        # Process Started
+        start = time.time()
+
+        try:
+            csv_file, csv_name = self.collect_v1_csv(temp_dir)
+            df = self.get_v1_df(csv_file, csv_name)
+
+            df.to_sql('v1_dump', self.engine)
+
+        finally:
+            print(f'Ran V1 Solution: {round((time.time() - start) / 60, 2)}')
+
     def process_latest(self):
 
         # Process Started
@@ -485,72 +464,3 @@ class Extractor(object):
 
         # Run Time
         self.logger.info(f'Ran: {round((time.time() - start) / 60, 2)}')
-
-    @temp_handler
-    def run_v2(self, temp_dir, hfl_id, ext_geo):
-        """
-        Runner function to extract, process and push events from GDELT 2.0 into an existing hosted feature layer and table.
-
-        NOTE: If Hosted feature layer and table do not exist, it's recommend to run the build_V2 function to create layer
-        with the necessary schema to load data into.
-        """
-
-        start = time.time()
-
-        try:
-            # Flag for Summary Table Deletion
-            past_date = (datetime.utcnow() - timedelta(hours=self.max_age))
-
-            # Process Latest 15 Minute Hosted Feature Layer
-            all_itm = self.get_gis_item(hfl_id, self.gis)
-            all_lyr = all_itm.layers[0]
-            all_sdf = all_lyr.query(out_fields='extracted_date', return_geometry=False).sdf
-
-            # Collect & Unpack Latest 15 Minute CSV Dump
-            csv_file, csv_name = self.collect_v2_csv(temp_dir)
-            csv_date = pd.to_datetime(csv_name).replace(tzinfo=pytz.UTC)
-
-            # Skip Anything Already Processed
-            if len(all_sdf) > 0 and np.datetime64(csv_date) in all_sdf['extracted_date'].unique():
-                print(f'Data Already Extracted for Current Date: {csv_date}')
-                return
-
-            # Convert Current 15 Minute GDELT Data to Spatial Data Frame
-            new_df = self.get_v2_sdf(csv_file, csv_name, ext_geo)
-
-            # Remove Data Older Than Max Age from GDELT 2.0 hosted feature layer table.
-            # Return If Date Already Processed
-            if len(all_sdf):
-                self.delete(all_lyr, all_sdf, 'extracted_date', all_lyr.properties.objectIdField, past_date)
-
-            # Push New Data
-            self.process_edits(all_lyr, new_df, 'add')
-
-        finally:
-            print(f'Ran V2 Solution: {round((time.time() - start) / 60, 2)}')
-
-    @temp_handler
-    def run_v1(self, temp_dir, hft_id, gdb_path):
-        """
-        Runner function to extract, process and push events from GDELT 1.0 into an existing hosted feature layer and table.
-
-        NOTE: If Hosted feature layer and table do not exist, it's recommend to run the build_v1 function to create layer
-        with the necessary schema to load data into.
-        """
-
-        # Process Started
-        start = time.time()
-
-        try:
-            # Collect & Unpack Latest Daily CSV Dump
-            csv_file, csv_name = self.collect_v1_csv(temp_dir)
-
-            # Get Data Frame with SHAPE Attributes
-            df = self.get_v1_sdf(csv_file, csv_name)
-
-            # Create Local Feature Class
-            fc = df.spatial.to_featureclass(os.path.join(gdb_path, f'V1_{csv_name}'), overwrite=True)
-            print(f"Created Local Feature Class: {fc}")
-
-        finally:
-            print(f'Ran V1 Solution: {round((time.time() - start) / 60, 2)}')

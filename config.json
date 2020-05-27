@@ -2,5 +2,6 @@
   "db_name": "gdelt_news",
   "db_user": "postgres",
   "db_pass": "postgres",
-  "db_host": "localhost"
+  "db_host": "localhost",
+  "db_port": "5432"
 }
