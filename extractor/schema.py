@@ -62,6 +62,11 @@ v2_header = [
     'SOURCEURL'
 ]
 
+v2_dtypes = {
+    'EventCode': str,
+    'EventRootCode': str
+}
+
 v1_header = [
     'GLOBALEVENTID',
     'SQLDATE',
@@ -123,6 +128,11 @@ v1_header = [
     'SOURCEURL'
 ]
 
+v1_dtypes = {
+    'EventCode': str,
+    'EventRootCode': str
+}
+
 article_columns = [
     'GLOBALEVENTID',
     'TITLE',
@@ -153,60 +163,4 @@ cameo = {
     '18': 'Assault',
     '19': 'Fight',
     '20': 'Mass Violence'
-}
-
-dtype_map = {
-    'isrootevent': str,
-    'eventcode': str,
-    'eventbasecode': str,
-    'eventrootcode': str,
-    'globaleventid': str,
-    'dateadded': str,
-    'sqldate': int,
-    'monthyear': int,
-    'year': int,
-    'fractiondate': float,
-    'actiongeo type': int,
-    'actor1code': str,
-    'actor2code': str,
-    'actor1name': str,
-    'actor2name': str,
-    'actor1countrycode': str,
-    'actor2countrycode': str,
-    'actor1knowngroupcode': str,
-    'actor2knowngroupcode': str,
-    'actor1ethniccode': str,
-    'actor2ethniccode': str,
-    'actor1religion1code': str,
-    'actor2religion1code': str,
-    'actor1religion2code': str,
-    'actor2religion2code': str,
-    'actor1type1code': str,
-    'actor2type1code': str,
-    'actor1type2code': str,
-    'actor2type2code': str,
-    'actor1type3code': str,
-    'actor2type3code': str,
-    'quadclass': str,
-    'goldsteinscale': float,
-    'nummentions': int,
-    'numsources': int,
-    'numarticles': int,
-    'avgtone': float,
-    'actiongeo_fullname': str,
-    'actiongeo_lat': float,
-    'actiongeo_long': float,
-    'actiongeo_featureid': str,
-    'actor1geo_fullname': str,
-    'actor1geo_countrycode': str,
-    'actor1geo_adm1code': str,
-    'actor1geo_lat': float,
-    'actor1geo_long': float,
-    'actor1geo_featureid': str,
-    'actor2geo_fullname': str,
-    'actor2geo_countrycode': str,
-    'actor2geo_adm1code': str,
-    'actor2geo_lat': float,
-    'actor2geo_long': float,
-    'actor2geo_featureid': str
 }

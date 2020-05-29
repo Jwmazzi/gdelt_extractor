@@ -1,21 +1,19 @@
-from .schema import v2_header, v1_header, article_columns, cameo, dtype_map
+from .schema import v2_header, v1_header, article_columns, cameo, v1_dtypes, v2_dtypes
 
 from multiprocessing import Pool, cpu_count
 from sqlalchemy import create_engine
-from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from newspaper import Article
 from itertools import chain
 from functools import wraps
 import pandas as pd
-import numpy as np
 import traceback
+import psycopg2
 import requests
 import tempfile
 import zipfile
 import shutil
-import pytz
 import json
 import time
 import sys
@@ -39,12 +37,13 @@ class Extractor(object):
 
         self.config = self.read_config(config)
 
-        self.engine = self.create_engine()
+        self.db_name = self.config["db_name"]
+        self.db_user = self.config["db_user"]
+        self.db_pass = self.config["db_pass"]
+        self.db_host = self.config["db_host"]
+        self.db_port = self.config["db_port"]
 
-        self.latest_src = 'gdelt_latest_src'
-        self.latest_tmp = 'gdelt_latest_tmp'
-        self.latest_dst = 'gdelt_latest_dst'
-        self.latest_run = 'gdelt_latest_run'
+        self.engine = self.create_engine()
 
     @staticmethod
     def read_config(config):
@@ -114,13 +113,7 @@ class Extractor(object):
 
     def create_engine(self):
 
-        n = self.config["db_name"]
-        u = self.config["db_user"]
-        p = self.config["db_pass"]
-        h = self.config["db_host"]
-        t = self.config["db_port"]
-
-        return create_engine(f'postgresql://{u}:{p}@{h}:{t}/{n}')
+        return create_engine(f'postgresql://{self.db_user}:{self.db_pass}@{self.db_host}:{self.db_port}/{self.db_name}')
 
     def get_connection(self):
 
@@ -148,8 +141,6 @@ class Extractor(object):
 
     def open_connection(func):
 
-        """ Inserts Cursor Object As First Arguement of Function """
-
         @wraps(func)
         def wrap(*args, **kwargs):
             with args[0].get_connection() as connection:
@@ -158,6 +149,16 @@ class Extractor(object):
                     args.insert(1, cursor)
                     return func(*args, **kwargs)
         return wrap
+
+    @open_connection
+    def set_geom_field(self, cursor, table_name):
+
+        cursor.execute(f"select addgeometrycolumn('{table_name}', 'geom', 4326, 'POINT', 2)")
+
+    @open_connection
+    def pop_geom_field(self, cursor, table_name):
+
+        cursor.execute(f"update {table_name} set geom = st_setsrid(st_point(actor1geo_long, actor1geo_lat), 4326)")
 
     def process_article(self, source_url):
 
@@ -212,7 +213,8 @@ class Extractor(object):
 
     def process_df(self, df):
 
-        df = df[:50]
+        # Keep First Unique URL
+        df.drop_duplicates('SOURCEURL', inplace=True)
 
         print(f'Processing {len(df)} GDELT Records')
 
@@ -221,6 +223,12 @@ class Extractor(object):
             article_data = self.article_enrichment(df[['GLOBALEVENTID', 'SOURCEURL']].values.tolist())
             article_df   = pd.DataFrame(article_data, columns=article_columns)
             df = df.merge(article_df, on='GLOBALEVENTID')
+
+        else:
+            df = pd.concat([df, pd.DataFrame(columns=article_columns)])
+
+        # Ensure Columns Are Lowercase
+        df.columns = map(str.lower, df.columns)
 
         return df
 
@@ -265,7 +273,7 @@ class Extractor(object):
     def get_v2_df(self, csv_file):
 
         try:
-            df = pd.read_csv(csv_file, sep='\t', names=v2_header, dtype=dtype_map)
+            df = pd.read_csv(csv_file, sep='\t', names=v2_header, dtype=v2_dtypes)
 
             return self.process_df(df)
 
@@ -276,79 +284,12 @@ class Extractor(object):
 
         try:
             # Convert csv into a pandas dataframe. See schema.py for columns processed from GDELT 2.0
-            df = pd.read_csv(csv_file, sep='\t', names=v1_header, dtype=dtype_map)
+            df = pd.read_csv(csv_file, sep='\t', names=v1_header, dtype=v1_dtypes)
 
-            return self.process_df(df, csv_name)
+            return self.process_df(df)
 
         except Exception as gen_exc:
             print(f'Error Building SDF: {gen_exc}')
-
-    @open_connection
-    def check_table(self, cursor, table_name):
-
-        cursor.execute(f'''
-                       select tablename from pg_tables
-                       where tablename = '{table_name}'
-                       ''')
-
-        res = [row[0] for row in cursor.fetchall()]
-
-        if len(res) == 1:
-            return True
-
-        return False
-
-    @open_connection
-    def delete_table(self, cursor, table_name):
-
-        self.logger.info('Dropping Table: {}'.format(table_name))
-
-        cursor.execute(f'drop table if exists {table_name}')
-
-    @open_connection
-    def create_table(self, cursor, table_name):
-
-        self.logger.info(f'Creating Table: {table_name}')
-
-        cursor.execute(text_base.format(table_name))
-
-    @open_connection
-    def load_latest(self, cursor, table_name, text_data):
-
-        self.logger.info(f'Loading Data into Table: {table_name}')
-
-        with open(text_data, 'r', encoding='latin-1') as raw_data:
-            cursor.copy_from(raw_data, table_name)
-
-    @open_connection
-    def load_subset(self, cursor, src, dst):
-
-        cursor.execute(geom_base.format(dst, src))
-
-    @open_connection
-    def set_geom_field(self, cursor, table_name):
-
-        cursor.execute(f"select addgeometrycolumn('{table_name}', 'geom', 4326, 'POINT', 2)")
-
-    @open_connection
-    def pop_geom_field(self, cursor, table_name):
-
-        cursor.execute(f"update {table_name} set geom = st_setsrid(st_point(actor1geo_long, actor1geo_lat), 4326)")
-
-    @open_connection
-    def create_column(self, cursor, table, col_name, col_type):
-
-        cursor.execute(f"alter table {table} add column {col_name} {col_type};")
-
-    @open_connection
-    def rename_table(self, cursor, old, new):
-
-        cursor.execute(f"alter table {old} rename to {new}")
-
-    @open_connection
-    def create_run_table(self, cursor, table_name):
-
-        cursor.execute(run_base.format(table_name))
 
     @open_connection
     def insert_run(self, cursor, table_name, seconds):
@@ -356,111 +297,54 @@ class Extractor(object):
         cursor.execute(f"insert into {table_name} (runtime) values ({seconds})")
 
     @open_connection
-    def get_keywords(self, cursor):
+    def get_keywords(self, cursor, table):
 
-        cursor.execute(f"select keywords from {self.latest_dst}")
+        cursor.execute(f"select keywords from {table}")
 
         return [r.strip() for r in list(chain(*[r[0].split(',') for r in cursor.fetchall() if r[0]]))]
 
-    @open_connection
-    def remove_duplicates(self, cursor, table):
-
-        cursor.execute(f"select globaleventid, sourceurl from {table}")
-
-        deletions = []
-        seen_urls = []
-        for row in cursor.fetchall():
-            if row[1] not in seen_urls:
-                seen_urls.append(row[1])
-            else:
-                deletions.append(row[0])
-
-        cursor.execute(f"delete from {table} where globaleventid in {tuple(deletions)}")
-
-    def run_v2(self, temp_dir):
+    def run_v2(self):
 
         start = time.time()
+
+        temp_dir = tempfile.mkdtemp()
+        v2_table = 'v2'
 
         try:
             csv_file, csv_name = self.collect_v2_csv(temp_dir)
             df = self.get_v2_df(csv_file)
 
-            df.to_sql('v2_dump', self.engine, index=False, if_exists='replace')
+            df.to_sql(v2_table, self.engine, index=False, if_exists='replace')
+
+            self.set_geom_field(v2_table)
+            self.pop_geom_field(v2_table)
+
+            # Push Latest Run
+            self.insert_run(f'{v2_table}_lastrun', time.time())
 
         finally:
+            shutil.rmtree(temp_dir)
             print(f'Ran V2 Solution: {round((time.time() - start) / 60, 2)}')
 
-    @temp_handler
-    def run_v1(self, temp_dir):
+    def run_v1(self):
 
-        # Process Started
         start = time.time()
+
+        temp_dir = tempfile.mkdtemp()
+        v1_table = 'v1'
 
         try:
             csv_file, csv_name = self.collect_v1_csv(temp_dir)
             df = self.get_v1_df(csv_file, csv_name)
 
-            df.to_sql('v1_dump', self.engine)
+            df.to_sql(v1_table, self.engine, index=False, if_exists='replace')
+
+            self.set_geom_field(v1_table)
+            self.pop_geom_field(v1_table)
+
+            # Push Latest Run
+            self.insert_run(f'{v1_table}_lastrun', time.time())
 
         finally:
+            shutil.rmtree(temp_dir)
             print(f'Ran V1 Solution: {round((time.time() - start) / 60, 2)}')
-
-    def process_latest(self):
-
-        # Process Started
-        start = time.time()
-
-        # Fetch URL Information for Latest CSV
-        response = requests.get(self.v2_urls.get('last_update'))
-        last_url = [r for r in response.text.split('\n')[0].split(' ') if 'export' in r][0]
-
-        # Pull & Extract Latest CSV
-        self.logger.info(f'Processing Export CSV: {last_url}')
-        csv_file, tmp_path = self.extract_csv(last_url)
-
-        # Delete Existing Latest Tables
-        for table in [self.latest_src, self.latest_tmp]:
-            if self.check_table(table):
-                self.delete_table(table)
-
-        # Create All Text Baseline & Load Latest CSV Data
-        self.create_table(self.latest_src)
-        self.load_latest(self.latest_src, csv_file)
-
-        # Populate Table with Correct Types & Limited Attributes
-        self.load_subset(self.latest_src, self.latest_tmp)
-
-        # Populate Table with Geometries
-        self.set_geom_field(self.latest_tmp)
-        self.pop_geom_field(self.latest_tmp)
-
-        # Create Columns for Article Processing
-        self.create_column(self.latest_tmp, 'meta_keys', 'text')
-        self.create_column(self.latest_tmp, 'keywords', 'text')
-        self.create_column(self.latest_tmp, 'summary', 'text')
-        self.create_column(self.latest_tmp, 'title', 'text')
-        self.create_column(self.latest_tmp, 'site', 'text')
-
-        # Remove "Duplicate" Entries
-        self.remove_duplicates(self.latest_tmp)
-
-        # Enrich from Articles
-        self.process_events(self.latest_tmp)
-
-        # Dump Existing Destination & Replace With New Data
-        if self.check_table(self.latest_dst):
-            self.delete_table(self.latest_dst)
-        self.rename_table(self.latest_tmp, self.latest_dst)
-
-        # Remove Temporary Files
-        shutil.rmtree(tmp_path)
-
-        # Ensure Run Table Exists
-        if not self.check_table(self.latest_run):
-            self.create_run_table(self.latest_run)
-
-        # Push Latest Run
-        self.insert_run(self.latest_run, time.time())
-
-        # Run Time
-        self.logger.info(f'Ran: {round((time.time() - start) / 60, 2)}')
