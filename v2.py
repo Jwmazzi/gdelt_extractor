@@ -7,7 +7,5 @@ if __name__ == "__main__":
     config   = os.path.join(this_dir, 'config.json')
 
     e = Extractor(config)
-    # e.articles = False
 
-    e.run_v1()
-    # e.run_v2()
+    e.run_v2()
