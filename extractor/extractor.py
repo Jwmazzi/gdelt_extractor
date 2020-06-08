@@ -301,7 +301,7 @@ class Extractor(object):
 
         cursor.execute(f"select keywords from {table}")
 
-        return [r.strip() for r in list(chain(*[r[0].split(',') for r in cursor.fetchall() if r[0]]))]
+        return [r.strip() for r in list(chain(*[r[0].split(';') for r in cursor.fetchall() if r[0]]))]
 
     def run_v2(self):
 
