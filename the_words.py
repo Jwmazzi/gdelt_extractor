@@ -2,6 +2,7 @@ from extractor import Extractor
 from collections import Counter
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
+import shutil
 import os
 
 
@@ -34,3 +35,5 @@ if __name__ == "__main__":
     plt.axis("off")
     plt.tight_layout(pad=0)
     plt.savefig('words.png')
+
+    shutil.move('words.png', '/var/www/html/words.png')
