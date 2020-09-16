@@ -8,6 +8,8 @@ import os
 
 global freq_dict
 
+ignore = ['state']
+
 
 def grey_color(word, font_size, position, orientation, random_state=None, **kwargs):
 
@@ -25,7 +27,7 @@ if __name__ == "__main__":
 
     keyword_list = Extractor(config).get_keywords('v2')
     freq_dict    = {k: v for k, v in dict(Counter(keyword_list)).items()}
-    keyword_list = [k for k in keyword_list if k in freq_dict.keys()]
+    keyword_list = [k for k in keyword_list if k in freq_dict.keys() if k not in ignore]
 
     wordcloud = WordCloud(width=1000, height=1000, min_font_size=10, background_color='black')
     wordcloud.generate(' '.join(keyword_list))
