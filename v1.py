@@ -8,4 +8,6 @@ if __name__ == "__main__":
 
     e = Extractor(config)
 
+    # Running Samples
+
     e.run_v1()
