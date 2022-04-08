@@ -1,4 +1,4 @@
-text_base = '''
+text_base = """
             create table if not exists {} (
             GLOBALEVENTID text,
             SQLDATE text,
@@ -62,10 +62,10 @@ text_base = '''
             DATEADDED text,
             SOURCEURL text
             );
-            '''
+            """
 
 
-geom_base = '''
+geom_base = """
             select 
             globaleventid, 
             sqldate, 
@@ -81,10 +81,10 @@ geom_base = '''
             into {}
             from {}
             where actor1geo_lat != '' and actor1geo_long != ''
-            '''
+            """
 
-run_base = '''
+run_base = """
            create table if not exists {} (
            runtime float
            )
-           '''
+           """
