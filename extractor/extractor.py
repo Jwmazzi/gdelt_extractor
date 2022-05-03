@@ -353,7 +353,7 @@ class Extractor(object):
             self.set_geom_field(v2_table)
             self.pop_geom_field(v2_table)
 
-            lr_df = pd.DataFrame({'runtime': [time.time()]})
+            lr_df = pd.DataFrame({"runtime": [time.time()]})
             lr_df.to_sql("v2_lastrun", self.engine, index=False, if_exists="replace")
 
         finally:
@@ -376,7 +376,7 @@ class Extractor(object):
             self.set_geom_field(v1_table)
             self.pop_geom_field(v1_table)
 
-            lr_df = pd.DataFrame({'runtime': [time.time()]})
+            lr_df = pd.DataFrame({"runtime": [time.time()]})
             lr_df.to_sql("v1_lastrun", self.engine, index=False, if_exists="replace")
 
         finally:
