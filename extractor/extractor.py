@@ -346,15 +346,15 @@ class Extractor(object):
 
         try:
             csv_file, csv_name = self.collect_v2_csv(temp_dir)
-            df = self.get_v2_df(csv_file)
+            v2_df = self.get_v2_df(csv_file)
 
-            df.to_sql(v2_table, self.engine, index=False, if_exists="replace")
+            v2_df.to_sql(v2_table, self.engine, index=False, if_exists="replace")
 
             self.set_geom_field(v2_table)
             self.pop_geom_field(v2_table)
 
-            # Push Latest Run
-            self.insert_run(f"{v2_table}_lastrun", time.time())
+            lr_df = pd.DataFrame({'runtime': [time.time()]})
+            lr_df.to_sql("v2_lastrun", self.engine, index=False, if_exists="replace")
 
         finally:
             shutil.rmtree(temp_dir)
@@ -369,15 +369,15 @@ class Extractor(object):
 
         try:
             csv_file, csv_name = self.collect_v1_csv(temp_dir)
-            df = self.get_v1_df(csv_file, csv_name)
+            v1_df = self.get_v1_df(csv_file, csv_name)
 
-            df.to_sql(v1_table, self.engine, index=False, if_exists="replace")
+            v1_df.to_sql(v1_table, self.engine, index=False, if_exists="replace")
 
             self.set_geom_field(v1_table)
             self.pop_geom_field(v1_table)
 
-            # Push Latest Run
-            self.insert_run(f"{v1_table}_lastrun", time.time())
+            lr_df = pd.DataFrame({'runtime': [time.time()]})
+            lr_df.to_sql("v1_lastrun", self.engine, index=False, if_exists="replace")
 
         finally:
             shutil.rmtree(temp_dir)
