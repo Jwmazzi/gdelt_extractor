@@ -201,7 +201,13 @@ class Extractor(object):
         return [title, site, summary, keywords, meta_keys]
 
     @staticmethod
-    def extract_csv(csv_url, temp_dir):
+    def extract_csv(csv_name: str, csv_url: str, temp_dir: str) -> str:
+
+        """Fetches URL and extracts CSV content to local directory
+
+        Returns:
+            str: Path to local CSV with data for input URL
+        """
 
         response = requests.get(csv_url, stream=True)
 
@@ -213,8 +219,8 @@ class Extractor(object):
         with zipfile.ZipFile(zip_path, "r") as the_zip:
             the_zip.extractall(temp_dir)
 
-        txt_name = zip_name.strip("export.CSV.zip")
-        txt_name += ".txt"
+        txt_name = zip_name.strip(f"{csv_name}.CSV.zip")
+        txt_name += f"_{csv_name}.txt"
         txt_path = os.path.join(temp_dir, txt_name)
 
         os.rename(zip_path.strip(".zip"), txt_path)
@@ -238,7 +244,13 @@ class Extractor(object):
 
         return list(chain(*data))
 
-    def process_df(self, df):
+    def process_df(self, df: pd.DataFrame) -> pd.DataFrame:
+
+        """Process DataFrame for the export data in GDELT 2.0
+
+        Returns:
+            _type_: _description_
+        """
 
         # Keep First Unique URL
         df.drop_duplicates("SOURCEURL", inplace=True)
@@ -261,14 +273,31 @@ class Extractor(object):
 
         return df
 
-    def fetch_last_v2_url(self):
+    def fetch_last_v2_urls(self) -> dict:
+
+        """Return the 3 URLs for GDELT 2.0 - export, mentions, gkg
+
+        Returns:
+            dict: A lookup of 2.0 data type (e.g. mentions) to the URL for the data
+        """
 
         response = requests.get(self.v2_urls.get("last_update"))
-        last_url = [
-            r for r in response.text.split("\n")[0].split(" ") if "export" in r
-        ][0]
 
-        return last_url
+        data = {}
+
+        rows = [row for row in response.text.split("\n") if row]
+
+        for row in rows:
+
+            url = row.split(" ")[-1]
+            label = url.split(".")[-3]
+
+            data.update({label: url})
+
+        if len(data.keys()) != 3:
+            raise ValueError(f"Expecting 3 Keys for GDELT 2.0. Received: {data.keys()}")
+
+        return data
 
     def fetch_last_v1_url(self):
 
@@ -290,21 +319,32 @@ class Extractor(object):
 
         return csv_file, csv_name
 
-    def collect_v2_csv(self, temp_dir):
+    def collect_v2_data(self, temp_dir: str) -> dict:
 
-        last_url = self.fetch_last_v2_url()
+        """Fetch latest 15 Minute data for GDELT 2.0
 
-        csv_file = self.extract_csv(last_url, temp_dir)
+        Returns:
+            dict: Keys (e.g. gkg) pointing to extracted 2.0 data
+        """
 
-        # CSV File Name Will be Converted to Date & Stored in "Extracted_Date" Column
-        csv_name = os.path.basename(csv_file).split(".")[0]
+        last_data = self.fetch_last_v2_urls()
 
-        return csv_file, csv_name
+        # Replace URL Value with Local Path to Extracted Data
+        for label, url in last_data.items():
+            last_data[label] = self.extract_csv(label, url, temp_dir)
 
-    def get_v2_df(self, csv_file):
+        return last_data
+
+    def get_v2_df(self, file_path: str) -> pd.DataFrame:
+
+        """Load local extract into a DataFrame and return processed version
+
+        Returns:
+            DataFrame: Processed DataFrame for the export data in GDELT 2.0
+        """
 
         try:
-            df = pd.read_csv(csv_file, sep="\t", names=v2_header, dtype=v2_dtypes)
+            df = pd.read_csv(file_path, sep="\t", names=v2_header, dtype=v2_dtypes)
 
             return self.process_df(df)
 
@@ -339,14 +379,16 @@ class Extractor(object):
 
     def run_v2(self):
 
+        """Load most recent GDELT 2.0 15 minute update into DB"""
+
         start = time.time()
 
         temp_dir = tempfile.mkdtemp()
         v2_table = "v2"
 
         try:
-            csv_file, csv_name = self.collect_v2_csv(temp_dir)
-            v2_df = self.get_v2_df(csv_file)
+            data_dict = self.collect_v2_data(temp_dir)
+            v2_df = self.get_v2_df(data_dict.get("export"))
 
             v2_df.to_sql(v2_table, self.engine, index=False, if_exists="replace")
 
