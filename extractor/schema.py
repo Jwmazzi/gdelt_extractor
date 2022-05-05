@@ -125,6 +125,27 @@ v1_header = [
     "SOURCEURL",
 ]
 
+v2_m_header = [
+    "GLOBALEVENTID",
+    "EventTimeDate",
+    "MentionTimeDate",
+    "MentionType",
+    "MentionSourceName",
+    "MentionIdentifier",
+    "SentenceID",
+    "Actor1CharOffset",
+    "Actor2CharOffset",
+    "ActionCharOffset",
+    "InRawText",
+    "Confidence",
+    "MentionDocLen",
+    "MentionDocTone",
+    "MentionDocTranslationInfo",
+    "Extras"
+]
+
+v2_m_dtypes = {}
+
 v1_dtypes = {"EventCode": str, "EventRootCode": str}
 
 article_columns = ["GLOBALEVENTID", "TITLE", "SITE", "SUMMARY", "KEYWORDS", "META"]

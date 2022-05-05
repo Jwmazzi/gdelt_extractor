@@ -1,4 +1,4 @@
-from .schema import v2_header, v1_header, article_columns, cameo, v1_dtypes, v2_dtypes
+from .schema import *
 
 from multiprocessing import Pool, cpu_count
 from sqlalchemy import create_engine
@@ -43,7 +43,7 @@ class Extractor(object):
         self.db_host = self.config["db_host"]
         self.db_port = self.config["db_port"]
 
-        self.engine = self.create_engine()
+        self.engine = self.get_engine()
 
     @staticmethod
     def read_config(config):
@@ -120,7 +120,7 @@ class Extractor(object):
 
         return processed_data
 
-    def create_engine(self):
+    def get_engine(self):
 
         return create_engine(
             f"postgresql://{self.db_user}:{self.db_pass}@{self.db_host}:{self.db_port}/{self.db_name}"
@@ -249,7 +249,7 @@ class Extractor(object):
         """Process DataFrame for the export data in GDELT 2.0
 
         Returns:
-            _type_: _description_
+            DataFrame: Cleaned version of the export extract
         """
 
         # Keep First Unique URL
@@ -269,6 +269,18 @@ class Extractor(object):
             df = pd.concat([df, pd.DataFrame(columns=article_columns)])
 
         # Ensure Columns Are Lowercase
+        df.columns = map(str.lower, df.columns)
+
+        return df
+
+    def process_df_mentions(self, df: pd.DataFrame) -> pd.DataFrame:
+
+        """Process DataFrame for the mentions data in GDELT 2.0
+
+        Returns:
+            DataFrame: Cleaned version of the mentions extract
+        """
+
         df.columns = map(str.lower, df.columns)
 
         return df
@@ -349,6 +361,22 @@ class Extractor(object):
             return self.process_df(df)
 
         except Exception as gen_exc:
+            print(f"Error Building Export SDF: {gen_exc}")
+
+    def get_v2_mentions_df(self, file_path: str) -> pd.DataFrame:
+
+        """Local local extract into a DataFrame and return processed version
+
+        Returns:
+            DataFrame: Processed DataFrame for the mentions data in GDELT 2.0
+        """
+
+        try:
+            df = pd.read_csv(file_path, sep="\t", names=v2_m_header, dtype=v2_m_dtypes)
+
+            return self.process_df_mentions(df)
+
+        except Exception as gen_exc:
             print(f"Error Building SDF: {gen_exc}")
 
     def get_v1_df(self, csv_file, csv_name):
@@ -379,24 +407,27 @@ class Extractor(object):
 
     def run_v2(self):
 
-        """Load most recent GDELT 2.0 15 minute update into DB"""
+        """Load most recent GDELT 2.0 15 minute update into DB """
 
         start = time.time()
-
         temp_dir = tempfile.mkdtemp()
-        v2_table = "v2"
 
         try:
             data_dict = self.collect_v2_data(temp_dir)
+
+            # Handle Exports Table
             v2_df = self.get_v2_df(data_dict.get("export"))
+            v2_df.to_sql("v2_exports", self.engine, index=False, if_exists="replace")
+            self.set_geom_field("v2_exports")
+            self.pop_geom_field("v2_exports")
 
-            v2_df.to_sql(v2_table, self.engine, index=False, if_exists="replace")
+            # Handle Mentions Table
+            v2_mention_df = self.get_v2_mentions_df(data_dict.get("mentions"))
+            v2_mention_df.to_sql("v2_mentions", self.engine, index=False, if_exists="replace")
 
-            self.set_geom_field(v2_table)
-            self.pop_geom_field(v2_table)
-
+            # Store Last Run
             lr_df = pd.DataFrame({"runtime": [time.time()]})
-            lr_df.to_sql("v2_lastrun", self.engine, index=False, if_exists="replace")
+            lr_df.to_sql("v2_lastrun", self.engine, index=False, if_exists="replace")     
 
         finally:
             shutil.rmtree(temp_dir)
